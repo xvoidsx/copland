@@ -1,0 +1,291 @@
+// copland renderer — panes, PTYs, and the leader key.
+//
+// Architecture: the main process owns every PTY (node-pty). Each pane here
+// owns one xterm.js Terminal, rendered with the WebGL addon (GPU-backed)
+// and falling back to the canvas renderer if WebGL is unavailable.
+//
+// Layout is a tiny tree: leaves hold terminals, splits hold two children.
+// Splits re-render as nested flexbox. Focus, zoom, and kill walk the tree.
+//
+// Keybinds come from config/keybinds.json. The leader (default Alt+Space)
+// arms on keydown; the next key selects a binding. Nothing here hardcodes
+// the leader — change the JSON, not this file.
+
+const { Terminal } = window;
+const { FitAddon } = window;
+const { WebglAddon } = window;
+
+let keybinds = null;
+let leaderArmed = false;
+let leaderTimer = null;
+
+const panesRoot = document.getElementById('panes');
+const leaderIndicator = document.getElementById('leader-indicator');
+const statusPanes = document.getElementById('status-panes');
+
+// ---------- pane tree ----------
+
+let focusedLeaf = null;
+
+function makeLeaf() {
+  const el = document.createElement('div');
+  el.className = 'leaf';
+  const holder = document.createElement('div');
+  holder.className = 'xterm-holder';
+  el.appendChild(holder);
+
+  const term = new Terminal({
+    theme: window.NIGHTSHADE_NEON,
+    fontFamily: '"JetBrains Mono", "Noto Sans Mono", monospace',
+    fontSize: 14,
+    cursorBlink: true,
+    cursorStyle: 'block',
+    scrollback: 5000,
+    allowProposedApi: true,
+  });
+  const fit = new FitAddon.FitAddon();
+  term.loadAddon(fit);
+  term.open(holder);
+  try {
+    term.loadAddon(new WebglAddon.WebglAddon());
+  } catch (e) {
+    console.warn('copland: WebGL unavailable, using canvas renderer', e);
+  }
+  fit.fit();
+
+  const leaf = { type: 'leaf', el, holder, term, fit, ptyId: null };
+  term.onData((data) => {
+    if (leaf.ptyId != null) window.copland.writePty(leaf.ptyId, data);
+  });
+  // spawn the shell once we know our size
+  requestAnimationFrame(async () => {
+    fit.fit();
+    leaf.ptyId = await window.copland.spawnPty(term.cols, term.rows);
+  });
+  el.addEventListener('mousedown', () => focusLeaf(leaf));
+  return leaf;
+}
+
+let tree = null;
+
+function render() {
+  panesRoot.innerHTML = '';
+  if (!tree) return;
+  panesRoot.appendChild(renderNode(tree));
+  updateStatus();
+}
+
+function renderNode(node) {
+  if (node.type === 'leaf') return node.el;
+  const el = document.createElement('div');
+  el.className = 'split ' + node.dir;
+  el.appendChild(renderNode(node.a));
+  el.appendChild(renderNode(node.b));
+  return el;
+}
+
+function focusLeaf(leaf) {
+  if (focusedLeaf) focusedLeaf.el.classList.remove('focused');
+  focusedLeaf = leaf;
+  leaf.el.classList.add('focused');
+  leaf.term.focus();
+  updateStatus();
+}
+
+function forEachLeaf(node, fn) {
+  if (node.type === 'leaf') fn(node);
+  else { forEachLeaf(node.a, fn); forEachLeaf(node.b, fn); }
+}
+
+function leafCount() {
+  let n = 0;
+  forEachLeaf(tree, () => n++);
+  return n;
+}
+
+function fitAll() {
+  forEachLeaf(tree, (leaf) => {
+    leaf.fit.fit();
+    if (leaf.ptyId != null) {
+      window.copland.resizePty(leaf.ptyId, leaf.term.cols, leaf.term.rows);
+    }
+  });
+}
+
+// Replace `target` leaf with a split containing it and a fresh leaf.
+function splitLeaf(target, dir) {
+  const fresh = makeLeaf();
+  const split = { type: 'split', dir, a: target, b: fresh };
+  if (tree === target) {
+    tree = split;
+  } else {
+    replaceNode(tree, target, split);
+  }
+  render();
+  focusLeaf(fresh);
+  // the new leaf needs a beat for layout before it measures itself
+  requestAnimationFrame(() => fitAll());
+}
+
+function replaceNode(node, target, replacement) {
+  if (node.type !== 'split') return false;
+  if (node.a === target) { node.a = replacement; return true; }
+  if (node.b === target) { node.b = replacement; return true; }
+  return replaceNode(node.a, target, replacement) || replaceNode(node.b, target, replacement);
+}
+
+function killLeaf(target) {
+  if (tree === target) return; // never kill the last pane
+  if (target.ptyId != null) window.copland.killPty(target.ptyId);
+  target.term.dispose();
+  const sibling = findSibling(tree, target);
+  if (tree.type === 'split' && (tree.a === target || tree.b === target)) {
+    tree = sibling;
+  } else {
+    replaceNode(tree, findParent(tree, target), sibling);
+  }
+  render();
+  if (sibling.type === 'leaf') focusLeaf(sibling);
+  else forEachLeaf(sibling, (l) => { focusLeaf(l); return; });
+  requestAnimationFrame(() => fitAll());
+}
+
+function findParent(node, target) {
+  if (node.type !== 'split') return null;
+  if (node.a === target || node.b === target) return node;
+  return findParent(node.a, target) || findParent(node.b, target);
+}
+
+function findSibling(node, target) {
+  const parent = findParent(node, target);
+  if (!parent) return null;
+  return parent.a === target ? parent.b : parent.a;
+}
+
+// Directional focus: pick the leaf whose center is nearest in that direction.
+function focusDir(dir) {
+  const leaves = [];
+  forEachLeaf(tree, (l) => leaves.push(l));
+  if (leaves.length < 2 || !focusedLeaf) return;
+  const r0 = focusedLeaf.el.getBoundingClientRect();
+  const c0 = { x: r0.left + r0.width / 2, y: r0.top + r0.height / 2 };
+  let best = null, bestScore = Infinity;
+  for (const l of leaves) {
+    if (l === focusedLeaf) continue;
+    const r = l.el.getBoundingClientRect();
+    const c = { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    const dx = c.x - c0.x, dy = c.y - c0.y;
+    let primary, secondary;
+    if (dir === 'left') { primary = -dx; secondary = Math.abs(dy); }
+    else if (dir === 'right') { primary = dx; secondary = Math.abs(dy); }
+    else if (dir === 'up') { primary = -dy; secondary = Math.abs(dx); }
+    else { primary = dy; secondary = Math.abs(dx); }
+    if (primary <= 4) continue;
+    const score = secondary * 3 - primary;
+    if (score < bestScore) { bestScore = score; best = l; }
+  }
+  if (best) focusLeaf(best);
+}
+
+function updateStatus() {
+  statusPanes.textContent = leafCount() + (leafCount() === 1 ? ' pane' : ' panes');
+}
+
+// ---------- leader key ----------
+
+function armLeader() {
+  leaderArmed = true;
+  leaderIndicator.classList.remove('hidden');
+  clearTimeout(leaderTimer);
+  leaderTimer = setTimeout(disarmLeader, keybinds?.leaderTimeoutMs || 1500);
+}
+
+function disarmLeader() {
+  leaderArmed = false;
+  clearTimeout(leaderTimer);
+  leaderIndicator.classList.add('hidden');
+}
+
+function leaderMatches(e) {
+  const L = keybinds.leader;
+  const modsOk = (L.modifiers || []).every((m) =>
+    (m === 'alt' && e.altKey) ||
+    (m === 'ctrl' && e.ctrlKey) ||
+    (m === 'shift' && e.shiftKey) ||
+    (m === 'meta' && e.metaKey));
+  const noExtra =
+    (!L.modifiers.includes('alt') || e.altKey) &&
+    (!L.modifiers.includes('ctrl') || e.ctrlKey) &&
+    (!L.modifiers.includes('shift') || e.shiftKey) &&
+    (!L.modifiers.includes('meta') || e.metaKey);
+  return modsOk && noExtra && e.key === L.key;
+}
+
+const ACTIONS = {
+  'split-horizontal': () => focusedLeaf && splitLeaf(focusedLeaf, 'col'),
+  'split-vertical': () => focusedLeaf && splitLeaf(focusedLeaf, 'row'),
+  'focus-up': () => focusDir('up'),
+  'focus-down': () => focusDir('down'),
+  'focus-left': () => focusDir('left'),
+  'focus-right': () => focusDir('right'),
+  'kill-pane': () => focusedLeaf && killLeaf(focusedLeaf),
+  'zoom-pane': () => {
+    if (!focusedLeaf) return;
+    focusedLeaf.el.classList.toggle('zoomed');
+    requestAnimationFrame(() => fitAll());
+  },
+};
+
+window.addEventListener('keydown', (e) => {
+  if (!keybinds) return;
+  if (!leaderArmed && leaderMatches(e)) {
+    e.preventDefault();
+    e.stopPropagation();
+    armLeader();
+    return;
+  }
+  if (leaderArmed) {
+    const action = keybinds.bindings[e.key];
+    disarmLeader();
+    if (action && ACTIONS[action]) {
+      e.preventDefault();
+      e.stopPropagation();
+      ACTIONS[action]();
+    }
+    // unbound key: leader cancels, key passes through to the terminal
+  }
+}, true);
+
+window.addEventListener('resize', () => fitAll());
+
+// ---------- PTY plumbing ----------
+
+window.copland.onPtyData((id, data) => {
+  forEachLeaf(tree, (leaf) => {
+    if (leaf.ptyId === id) leaf.term.write(data);
+  });
+});
+
+window.copland.onPtyExit((id) => {
+  forEachLeaf(tree, (leaf) => {
+    if (leaf.ptyId === id) {
+      leaf.term.write('\r\n\x1b[38;2;255;49;49m[process exited]\x1b[0m\r\n');
+      leaf.ptyId = null;
+    }
+  });
+});
+
+// ---------- boot ----------
+
+(async function boot() {
+  try {
+    keybinds = await window.copland.loadKeybinds();
+  } catch (e) {
+    console.error('copland: could not load keybinds', e);
+    keybinds = { leader: { key: ' ', modifiers: ['alt'] }, leaderTimeoutMs: 1500, bindings: {} };
+  }
+  tree = makeLeaf();
+  render();
+  focusLeaf(tree);
+  requestAnimationFrame(() => fitAll());
+})();
