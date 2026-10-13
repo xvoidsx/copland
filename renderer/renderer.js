@@ -76,11 +76,18 @@ function render() {
 }
 
 function renderNode(node) {
-  if (node.type === 'leaf') return node.el;
+  if (node.type === 'leaf') {
+    node.el.style.flex = '';
+    return node.el;
+  }
   const el = document.createElement('div');
   el.className = 'split ' + node.dir;
-  el.appendChild(renderNode(node.a));
-  el.appendChild(renderNode(node.b));
+  const aEl = renderNode(node.a);
+  const bEl = renderNode(node.b);
+  aEl.style.flex = `${node.sizes[0]} 1 0%`;
+  bEl.style.flex = `${node.sizes[1]} 1 0%`;
+  el.appendChild(aEl);
+  el.appendChild(bEl);
   return el;
 }
 
@@ -115,7 +122,7 @@ function fitAll() {
 // Replace `target` leaf with a split containing it and a fresh leaf.
 function splitLeaf(target, dir) {
   const fresh = makeLeaf();
-  const split = { type: 'split', dir, a: target, b: fresh };
+  const split = { type: 'split', dir, a: target, b: fresh, sizes: [0.5, 0.5] };
   if (tree === target) {
     tree = split;
   } else {
@@ -160,6 +167,69 @@ function findSibling(node, target) {
   const parent = findParent(node, target);
   if (!parent) return null;
   return parent.a === target ? parent.b : parent.a;
+}
+
+// leaves in visual (in-order) order — the basis for cycling and swapping
+function orderedLeaves() {
+  const out = [];
+  forEachLeaf(tree, (l) => out.push(l));
+  return out;
+}
+
+function focusNext() {
+  const leaves = orderedLeaves();
+  if (leaves.length < 2) return;
+  const i = leaves.indexOf(focusedLeaf);
+  focusLeaf(leaves[(i + 1) % leaves.length]);
+}
+
+// swap the focused pane with its prev/next neighbor in tree order
+function swapFocused(dir) {
+  const leaves = orderedLeaves();
+  if (leaves.length < 2 || !focusedLeaf) return;
+  const i = leaves.indexOf(focusedLeaf);
+  const j = (i + dir + leaves.length) % leaves.length;
+  const other = leaves[j];
+  if (other === focusedLeaf) return;
+  const pa = findParent(tree, focusedLeaf);
+  const pb = findParent(tree, other);
+  if (!pa || !pb) return;
+  if (pa === pb) {
+    const tmp = pa.a; pa.a = pa.b; pa.b = tmp;
+  } else {
+    if (pa.a === focusedLeaf) pa.a = other; else pa.b = other;
+    if (pb.a === other) pb.a = focusedLeaf; else pb.b = focusedLeaf;
+  }
+  render();
+  focusLeaf(focusedLeaf);
+  requestAnimationFrame(() => fitAll());
+}
+
+// resize the focused pane: find the nearest ancestor split whose axis
+// matches the direction, then shift the size fractions.
+function resizeFocused(dir, delta = 0.06) {
+  if (!focusedLeaf) return;
+  const wantAxis = (dir === 'left' || dir === 'right') ? 'row' : 'col';
+  let node = focusedLeaf;
+  let parent = findParent(tree, node);
+  while (parent && parent.dir !== wantAxis) {
+    node = parent;
+    parent = findParent(tree, node);
+  }
+  if (!parent) return;
+  const side = parent.a === node ? 0 : 1;
+  let d;
+  if (parent.dir === 'row') {
+    d = dir === 'right' ? (side === 0 ? delta : -delta)
+                        : (side === 0 ? -delta : delta);
+  } else {
+    d = dir === 'down' ? (side === 0 ? delta : -delta)
+                       : (side === 0 ? -delta : delta);
+  }
+  parent.sizes[0] = Math.min(0.9, Math.max(0.1, parent.sizes[0] + d));
+  parent.sizes[1] = 1 - parent.sizes[0];
+  render();
+  requestAnimationFrame(() => fitAll());
 }
 
 // Directional focus: pick the leaf whose center is nearest in that direction.
@@ -228,6 +298,13 @@ const ACTIONS = {
   'focus-down': () => focusDir('down'),
   'focus-left': () => focusDir('left'),
   'focus-right': () => focusDir('right'),
+  'focus-next': () => focusNext(),
+  'swap-prev': () => swapFocused(-1),
+  'swap-next': () => swapFocused(1),
+  'resize-up': () => resizeFocused('up'),
+  'resize-down': () => resizeFocused('down'),
+  'resize-left': () => resizeFocused('left'),
+  'resize-right': () => resizeFocused('right'),
   'kill-pane': () => focusedLeaf && killLeaf(focusedLeaf),
   'zoom-pane': () => {
     if (!focusedLeaf) return;
@@ -235,6 +312,20 @@ const ACTIONS = {
     requestAnimationFrame(() => fitAll());
   },
 };
+
+// "Shift+ArrowUp", "Ctrl+h", "x" — modifiers in canonical order, then the key.
+// shift is dropped for single printable chars: typing "{" already holds
+// shift, so "Shift+{" would never match a "{" binding.
+function keyCombo(e) {
+  const parts = [];
+  const isChar = e.key.length === 1;
+  if (e.ctrlKey) parts.push('Ctrl');
+  if (e.altKey) parts.push('Alt');
+  if (e.shiftKey && !isChar) parts.push('Shift');
+  if (e.metaKey) parts.push('Meta');
+  parts.push(isChar ? e.key.toLowerCase() : e.key);
+  return parts.join('+');
+}
 
 window.addEventListener('keydown', (e) => {
   if (!keybinds) return;
@@ -245,7 +336,7 @@ window.addEventListener('keydown', (e) => {
     return;
   }
   if (leaderArmed) {
-    const action = keybinds.bindings[e.key];
+    const action = keybinds.bindings[keyCombo(e)];
     disarmLeader();
     if (action && ACTIONS[action]) {
       e.preventDefault();

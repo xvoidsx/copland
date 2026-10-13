@@ -32,8 +32,14 @@ Leader, then:
 | ---- | ------ |
 | `h` / `v` | split horizontal / vertical |
 | arrows | move focus between panes |
+| `o` | cycle focus to next pane |
+| `Shift`+arrows | resize the focused pane |
+| `{` / `}` | swap focused pane with prev / next |
 | `x` | kill focused pane |
 | `z` | zoom focused pane |
+
+Keybinds live in `config/keybinds.json`; `~/.config/copland/keybinds.json`
+overrides them per-user (the tmux.conf equivalent).
 
 ## Stack
 

@@ -62,19 +62,24 @@ ipcMain.on('pty:kill', (event, id) => {
   ptys.delete(id);
 });
 
-// keybind config: read from disk in main, handed to the renderer over IPC.
-// (fetch() from file:// is unreliable; this never is.)
+// keybind config: ~/.config/copland/keybinds.json wins when present (the
+// tmux.conf equivalent), otherwise the bundled default. read from disk in
+// main and handed to the renderer over IPC — fetch() from file:// is
+// unreliable, this never is.
 ipcMain.handle('config:keybinds', () => {
   const fs = require('fs');
-  const p = path.join(__dirname, 'config', 'keybinds.json');
+  const userPath = path.join(os.homedir(), '.config', 'copland', 'keybinds.json');
+  const bundled = path.join(__dirname, 'config', 'keybinds.json');
+  const fallback = {
+    leader: { key: ' ', modifiers: ['alt'] },
+    leaderTimeoutMs: 1500,
+    bindings: {},
+  };
   try {
-    return JSON.parse(fs.readFileSync(p, 'utf8'));
+    if (fs.existsSync(userPath)) return JSON.parse(fs.readFileSync(userPath, 'utf8'));
+    return JSON.parse(fs.readFileSync(bundled, 'utf8'));
   } catch (e) {
-    console.warn('copland: could not read config/keybinds.json', e.message);
-    return {
-      leader: { key: ' ', modifiers: ['alt'] },
-      leaderTimeoutMs: 1500,
-      bindings: {},
-    };
+    console.warn('copland: could not read keybinds config', e.message);
+    return fallback;
   }
 });
