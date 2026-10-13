@@ -284,10 +284,10 @@ function leaderMatches(e) {
     (m === 'shift' && e.shiftKey) ||
     (m === 'meta' && e.metaKey));
   const noExtra =
-    (!L.modifiers.includes('alt') || e.altKey) &&
-    (!L.modifiers.includes('ctrl') || e.ctrlKey) &&
-    (!L.modifiers.includes('shift') || e.shiftKey) &&
-    (!L.modifiers.includes('meta') || e.metaKey);
+    (L.modifiers.includes('alt') || !e.altKey) &&
+    (L.modifiers.includes('ctrl') || !e.ctrlKey) &&
+    (L.modifiers.includes('shift') || !e.shiftKey) &&
+    (L.modifiers.includes('meta') || !e.metaKey);
   return modsOk && noExtra && e.key === L.key;
 }
 
@@ -316,19 +316,43 @@ const ACTIONS = {
 // "Shift+ArrowUp", "Ctrl+h", "x" — modifiers in canonical order, then the key.
 // shift is dropped for single printable chars: typing "{" already holds
 // shift, so "Shift+{" would never match a "{" binding.
+// While the leader is armed, the leader's own modifiers are transparent:
+// holding Alt through "leader, Alt+ArrowUp" computes "ArrowUp", so both
+// the release-it and hold-it styles work.
 function keyCombo(e) {
   const parts = [];
   const isChar = e.key.length === 1;
-  if (e.ctrlKey) parts.push('Ctrl');
-  if (e.altKey) parts.push('Alt');
-  if (e.shiftKey && !isChar) parts.push('Shift');
-  if (e.metaKey) parts.push('Meta');
+  const transparent = (leaderArmed && keybinds && keybinds.leader.modifiers) || [];
+  if (e.ctrlKey && !transparent.includes('ctrl')) parts.push('Ctrl');
+  if (e.altKey && !transparent.includes('alt')) parts.push('Alt');
+  if (e.shiftKey && !isChar && !transparent.includes('shift')) parts.push('Shift');
+  if (e.metaKey && !transparent.includes('meta')) parts.push('Meta');
   parts.push(isChar ? e.key.toLowerCase() : e.key);
   return parts.join('+');
 }
 
+// Ctrl+Shift+V pastes the clipboard into the focused pane. A global chord,
+// independent of the leader — the one terminal shortcut nobody wants to
+// arm a leader for.
+async function pasteToFocused() {
+  if (!focusedLeaf || focusedLeaf.ptyId == null) return;
+  try {
+    const text = await navigator.clipboard.readText();
+    if (text) window.copland.writePty(focusedLeaf.ptyId, text);
+  } catch (err) {
+    console.warn('copland: clipboard read failed', err);
+  }
+}
+
 window.addEventListener('keydown', (e) => {
   if (!keybinds) return;
+  if (e.code === 'KeyV' && e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (leaderArmed) disarmLeader();
+    pasteToFocused();
+    return;
+  }
   if (!leaderArmed && leaderMatches(e)) {
     e.preventDefault();
     e.stopPropagation();
@@ -336,6 +360,13 @@ window.addEventListener('keydown', (e) => {
     return;
   }
   if (leaderArmed) {
+    // auto-repeat while armed (a held leader key, a held arrow) must not
+    // disarm the leader or leak repeats into the terminal.
+    if (e.repeat) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
     const action = keybinds.bindings[keyCombo(e)];
     disarmLeader();
     if (action && ACTIONS[action]) {
