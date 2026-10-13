@@ -1,1 +1,52 @@
-{"author":"xvoidsx","build":{"appId":"xyz.xvoidsx.copland","linux":{"category":"Utility","target":["deb"]},"productName":"copland"},"dependencies":{"@xterm/addon-fit":"^0.10.0","@xterm/addon-webgl":"^0.18.0","@xterm/xterm":"^5.5.0","node-pty":"^1.0.0"},"description":"A beautiful Electron + WebGL terminal for navi — panes, nightshadeNeon, and navi's keybind soul.","devDependencies":{"electron":"30.5.1","electron-builder":"24.13.3"},"license":"GPL-3.0-only","main":"main.js","name":"copland","scripts":{"dist":"electron-builder","start":"electron ."},"version":"0.1.0-demo"}
+{
+  "author": "xvoidsx",
+  "build": {
+    "appId": "xyz.xvoidsx.copland",
+    "linux": {
+      "category": "Utility",
+      "target": [
+        "deb"
+      ],
+      "maintainer": "xvoidsx <https://xvoidsx.org>"
+    },
+    "productName": "copland",
+    "files": [
+      {
+        "from": ".",
+        "to": ".",
+        "filter": [
+          "package.json",
+          "main.js",
+          "preload.js"
+        ]
+      },
+      {
+        "from": "renderer",
+        "to": "renderer"
+      },
+      {
+        "from": "config",
+        "to": "config"
+      }
+    ]
+  },
+  "dependencies": {
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/addon-webgl": "^0.18.0",
+    "@xterm/xterm": "^5.5.0",
+    "node-pty": "^1.0.0"
+  },
+  "description": "A beautiful Electron + WebGL terminal for navi \u2014 panes, nightshadeNeon, and navi's keybind soul.",
+  "devDependencies": {
+    "electron": "30.5.1",
+    "electron-builder": "24.13.3"
+  },
+  "license": "GPL-3.0-only",
+  "main": "main.js",
+  "name": "copland",
+  "scripts": {
+    "dist": "electron-builder",
+    "start": "electron ."
+  },
+  "version": "0.1.0-demo"
+}
