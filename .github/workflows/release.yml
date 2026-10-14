@@ -17,7 +17,7 @@ jobs:
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
       - name: Build deb
-        run: npx electron-builder --linux deb
+        run: npx electron-builder --linux deb --publish never
       - name: Get version from tag
         id: version
         run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
