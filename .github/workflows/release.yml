@@ -1,40 +1,31 @@
-name: release
-
+name: build-deb
 on:
   push:
     tags:
       - 'v*'
-
+permissions:
+  contents: write
 jobs:
   build:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
-
       - name: Install dependencies
-        run: npm ci
-
+        run: npm ci --no-audit --no-fund
       - name: Build deb
-        # NOTE: never set GH_TOKEN here — electron-builder will attempt
-        # a GitHub publish and fail the build. softprops/action-gh-release
-        # handles the release with its own GITHUB_TOKEN.
         run: npx electron-builder --linux deb
-
-      - name: Verify deb
-        run: |
-          ls -la dist/*.deb
-          dpkg-deb -f dist/*.deb Version
-          dpkg-deb -c dist/*.deb | grep "opt/copland/$"
-
-      - name: Publish release
+      - name: Get version from tag
+        id: version
+        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+      - name: Create release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*.deb
+          files: dist/copland_*_amd64.deb
+          name: copland ${{ steps.version.outputs.version }}
+          draft: false
+          prerelease: false
           generate_release_notes: true
