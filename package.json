@@ -28,7 +28,8 @@
         "from": "config",
         "to": "config"
       }
-    ]
+    ],
+    "icon": "build/icon.png"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.10.0",
