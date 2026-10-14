@@ -1,5 +1,7 @@
 # copland
 
+<img width="1366" height="768" alt="image" src="https://github.com/user-attachments/assets/9d3e29cb-eb2b-41cb-abe9-aae02fd7d053" />
+
 A beautiful Electron + WebGL terminal for navi — panes, nightshadeNeon, and
 navi's keybind soul. If it earns it, copland becomes navi's default terminal.
 
