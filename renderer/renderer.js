@@ -331,9 +331,20 @@ function keyCombo(e) {
   return parts.join('+');
 }
 
-// Ctrl+Shift+V pastes the clipboard into the focused pane. A global chord,
-// independent of the leader — the one terminal shortcut nobody wants to
-// arm a leader for.
+// Ctrl+Shift+C copies the focused pane's selection to the clipboard.
+// Ctrl+Shift+V pastes the clipboard into the focused pane. Both are global
+// chords, independent of the leader — the terminal shortcuts nobody wants
+// to arm a leader for.
+async function copyFromFocused() {
+  if (!focusedLeaf || !focusedLeaf.term) return;
+  try {
+    const text = focusedLeaf.term.getSelection();
+    if (text) await navigator.clipboard.writeText(text);
+  } catch (err) {
+    console.warn('copland: clipboard write failed', err);
+  }
+}
+
 async function pasteToFocused() {
   if (!focusedLeaf || focusedLeaf.ptyId == null) return;
   try {
@@ -346,6 +357,13 @@ async function pasteToFocused() {
 
 window.addEventListener('keydown', (e) => {
   if (!keybinds) return;
+  if (e.code === 'KeyC' && e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (leaderArmed) disarmLeader();
+    copyFromFocused();
+    return;
+  }
   if (e.code === 'KeyV' && e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey) {
     e.preventDefault();
     e.stopPropagation();
@@ -363,6 +381,13 @@ window.addEventListener('keydown', (e) => {
     // auto-repeat while armed (a held leader key, a held arrow) must not
     // disarm the leader or leak repeats into the terminal.
     if (e.repeat) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    // Bare modifier keydowns (the Shift in Shift+Arrow) are part of a chord,
+    // not a binding — swallow them but keep the leader armed for the real key.
+    if (['Shift', 'Control', 'Alt', 'Meta'].includes(e.key)) {
       e.preventDefault();
       e.stopPropagation();
       return;

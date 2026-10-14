@@ -46,7 +46,14 @@ ipcMain.handle('pty:spawn', (event, cols, rows) => {
     cwd: os.homedir(),
     env: process.env,
   });
-  const wc = () => BrowserWindow.fromWebContents(event.sender)?.webContents;
+  const wc = () => {
+    // fromWebContents THROWS on a destroyed webContents (e.g. the pty
+    // emits during window teardown) — optional chaining can't catch that.
+    try {
+      if (event.sender.isDestroyed()) return undefined;
+      return BrowserWindow.fromWebContents(event.sender)?.webContents;
+    } catch (_) { return undefined; }
+  };
   p.onData((data) => { wc()?.send('pty:data', id, data); });
   p.onExit(() => { wc()?.send('pty:exit', id); ptys.delete(id); });
   ptys.set(id, p);
@@ -76,8 +83,20 @@ ipcMain.handle('config:keybinds', () => {
     bindings: {},
   };
   try {
-    if (fs.existsSync(userPath)) return JSON.parse(fs.readFileSync(userPath, 'utf8'));
-    return JSON.parse(fs.readFileSync(bundled, 'utf8'));
+    const base = JSON.parse(fs.readFileSync(bundled, 'utf8'));
+    // merge, don't replace: a user config from an older version lacks
+    // bindings added since (e.g. Shift+Arrow swap, Ctrl+Arrow resize).
+    // bundled defaults fill the gaps; user keys win on conflict.
+    if (fs.existsSync(userPath)) {
+      const user = JSON.parse(fs.readFileSync(userPath, 'utf8'));
+      return {
+        ...base,
+        ...user,
+        leader: { ...base.leader, ...(user.leader || {}) },
+        bindings: { ...base.bindings, ...(user.bindings || {}) },
+      };
+    }
+    return base;
   } catch (e) {
     console.warn('copland: could not read keybinds config', e.message);
     return fallback;
