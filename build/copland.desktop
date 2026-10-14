@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=copland
+Comment=xvoidsx terminal
+Exec=copland %U
+Terminal=false
+Type=Application
+Icon=copland
+Categories=System;TerminalEmulator;
+StartupWMClass=copland
