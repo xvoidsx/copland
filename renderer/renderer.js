@@ -36,7 +36,7 @@ function makeLeaf() {
 
   const term = new Terminal({
     theme: window.NIGHTSHADE_NEON,
-    fontFamily: '"JetBrains Mono", "Noto Sans Mono", monospace',
+    fontFamily: '"JetBrainsMono Nerd Font", "JetBrains Mono", "Noto Sans Mono", monospace',
     fontSize: 14,
     cursorBlink: true,
     cursorStyle: 'block',

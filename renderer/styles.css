@@ -22,7 +22,7 @@ html, body {
   height: 100%;
   background: var(--ob);
   color: var(--nw);
-  font-family: "JetBrains Mono", "Noto Sans Mono", monospace;
+  font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", "Noto Sans Mono", monospace;
   overflow: hidden;
 }
 
